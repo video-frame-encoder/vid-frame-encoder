@@ -180,6 +180,64 @@
       0% { background-color: #d4edda; }
       100% { background-color: #c3e6cb; }
     }
+
+    /* --- Interactive Demo styles --- */
+    #dinov3-demo {
+      margin-top: 2.5rem;
+    }
+
+    #dinov3-status {
+      min-height: 1.6rem;
+      text-align: center;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    #dinov3-wrapper {
+      margin-top: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      align-items: stretch;
+    }
+
+    #dinov3-video-container {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      cursor: crosshair;
+    }
+
+    #dinov3-video,
+    #dinov3-overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #dinov3-overlay {
+      pointer-events: auto;
+    }
+
+    #dinov3-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    #dinov3-controls button {
+      min-width: 90px;
+    }
+
+    #dinov3-slider {
+      flex: 1;
+    }
   </style>
 </head>
 
@@ -355,6 +413,34 @@
     </div>
   </section>
   <!-- End video carousel -->
+
+  <!-- Interactive Demo -->
+  <section class="section hero is-light" id="interactive-demo">
+    <div class="container is-max-desktop">
+      <h2 class="title is-3 has-text-centered fade-in-up">Interactive Demo</h2>
+      <p class="subtitle has-text-centered slide-in-left">
+        Experiment with an in-browser DINOv3 tracker on one of our FRAME clips. The video loads and processes automatically&mdash;click anywhere on the subject you want to follow to visualize the similarity heat map.
+      </p>
+
+      <div id="dinov3-demo" class="box">
+        <div id="dinov3-status">Preparing demo…</div>
+
+        <div id="dinov3-wrapper">
+          <div id="dinov3-video-container">
+            <video id="dinov3-video" playsinline muted></video>
+            <canvas id="dinov3-overlay"></canvas>
+          </div>
+
+          <div id="dinov3-controls">
+            <button id="dinov3-play" class="button is-dark" disabled>Play</button>
+            <input id="dinov3-slider" type="range" min="0" max="0" value="0" disabled>
+            <span id="dinov3-counter" class="tag is-dark">Frame 0 / 0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  <!-- End Interactive Demo -->
 
  <!-- Downstream Tasks (previously Key Results) - Optimized size -->
 <section class="hero is-light" style="padding: 2rem 0;">
@@ -707,26 +793,363 @@
   </section>
   <!--End BibTex citation -->
 
-</body>
+  <footer class="footer">
+    <div class="container">
+      <div class="columns is-centered">
+        <div class="column is-8">
+          <div class="content">
 
+            <p>
+              This page was built using the <a href="https://github.com/eliahuhorwitz/Academic-project-page-template" target="_blank">Academic Project Page Template</a> which was adopted from the <a href="https://nerfies.github.io" target="_blank">Nerfies</a> project page.
+              You are free to borrow the source code of this website, we just ask that you link back to this page in the footer. <br> This website is licensed under a <a rel="license"  href="http://creativecommons.org/licenses/by-sa/4.0/" target="_blank">Creative
+              Commons Attribution-ShareAlike 4.0 International License</a>.
+            </p>
 
-
-<footer class="footer">
-  <div class="container">
-    <div class="columns is-centered">
-      <div class="column is-8">
-        <div class="content">
-
-          <p>
-            This page was built using the <a href="https://github.com/eliahuhorwitz/Academic-project-page-template" target="_blank">Academic Project Page Template</a> which was adopted from the <a href="https://nerfies.github.io" target="_blank">Nerfies</a> project page.
-            You are free to borrow the source code of this website, we just ask that you link back to this page in the footer. <br> This website is licensed under a <a rel="license"  href="http://creativecommons.org/licenses/by-sa/4.0/" target="_blank">Creative
-            Commons Attribution-ShareAlike 4.0 International License</a>.
-          </p>
-
+          </div>
         </div>
       </div>
     </div>
-  </div>
-</footer>
+  </footer>
+
+  <script type="module">
+    import { AutoProcessor, AutoModel, RawImage, Tensor, PreTrainedModel, matmul } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
+
+    const DEMO_MODEL_ID = "onnx-community/dinov3-vits16-pretrain-lvd1689m-ONNX-MHA-scores";
+    const DEMO_VIDEO_URL = "https://huggingface.co/spaces/webml-community/DINOv3-video-tracking/resolve/main/examples/12927739_60fps.mp4";
+    const DEMO_TARGET_PIXELS = 250_000;
+    const DEMO_PLAYBACK_FPS = 10;
+    const DEMO_SIMILARITY_THRESHOLD = 0.75;
+
+    const demoStatus = document.getElementById("dinov3-status");
+    const demoVideo = document.getElementById("dinov3-video");
+    const demoOverlay = document.getElementById("dinov3-overlay");
+    const demoOverlayCtx = demoOverlay?.getContext("2d");
+    const demoSlider = document.getElementById("dinov3-slider");
+    const demoCounter = document.getElementById("dinov3-counter");
+    const demoPlayBtn = document.getElementById("dinov3-play");
+
+    let demoProcessor;
+    let demoModel;
+    let demoPostModel;
+    let demoPatchSize;
+    let demoOffsetTensor;
+
+    const demoOffscreenCanvas = document.createElement("canvas");
+    const demoOffscreenCtx = demoOffscreenCanvas.getContext("2d", { willReadFrequently: true });
+
+    const demoFrameCache = new Map();
+    const demoSelections = new Map();
+
+    let demoGridInfo = null;
+    let demoTotalFrames = 0;
+    let demoIsPlaying = false;
+    let demoAnimationId = null;
+    let demoLastFrameTime = 0;
+
+    function updateDemoStatus(message) {
+      if (demoStatus) demoStatus.textContent = message;
+    }
+
+    function setDemoControlsDisabled(disabled) {
+      if (!demoPlayBtn || !demoSlider) return;
+      demoPlayBtn.disabled = disabled;
+      demoSlider.disabled = disabled;
+    }
+
+    function updateDemoCounter() {
+      if (!demoCounter || !demoSlider) return;
+      const frame = demoTotalFrames ? parseInt(demoSlider.value, 10) + 1 : 0;
+      demoCounter.textContent = `Frame ${frame} / ${demoTotalFrames}`;
+    }
+
+    async function loadDemoModels() {
+      updateDemoStatus("Loading models…");
+      demoProcessor = await AutoProcessor.from_pretrained(DEMO_MODEL_ID);
+      demoProcessor.image_processor.do_resize = false;
+
+      demoModel = await AutoModel.from_pretrained(DEMO_MODEL_ID, {
+        device: "webgpu",
+        dtype: "fp32",
+        session_options: {
+          preferredOutputLocation: { last_hidden_state: "gpu-buffer" },
+        },
+      });
+
+      demoPostModel = await PreTrainedModel.from_pretrained(DEMO_MODEL_ID, {
+        model_file_name: "postprocess",
+        dtype: "fp32",
+        device: "webgpu",
+      });
+
+      demoPatchSize = demoModel.config.patch_size;
+      const offsetLen = 1 + (demoModel.config.num_register_tokens ?? 0);
+      demoOffsetTensor = new Tensor("int64", [offsetLen], []);
+    }
+
+    function configureDemoCanvas() {
+      if (!demoOverlay || !demoVideo) return;
+      demoOverlay.width = demoVideo.videoWidth;
+      demoOverlay.height = demoVideo.videoHeight;
+
+      const aspect = demoVideo.videoWidth / demoVideo.videoHeight;
+      const scaledHeight = Math.sqrt(DEMO_TARGET_PIXELS / aspect);
+      const scaledWidth = scaledHeight * aspect;
+
+      demoOffscreenCanvas.width = Math.max(demoPatchSize, Math.round(scaledWidth / demoPatchSize) * demoPatchSize);
+      demoOffscreenCanvas.height = Math.max(demoPatchSize, Math.round(scaledHeight / demoPatchSize) * demoPatchSize);
+    }
+
+    function prepareDemoFrames() {
+      if (!demoVideo || !demoSlider) return;
+      demoTotalFrames = Math.max(1, Math.floor(demoVideo.duration * DEMO_PLAYBACK_FPS));
+      demoSlider.max = demoTotalFrames - 1;
+      demoSlider.value = "0";
+      updateDemoCounter();
+    }
+
+    async function processDemoFrames() {
+      setDemoControlsDisabled(true);
+      demoFrameCache.clear();
+      demoSelections.clear();
+      demoGridInfo = null;
+
+      for (let frameIndex = 0; frameIndex < demoTotalFrames; frameIndex++) {
+        updateDemoStatus(`Processing frame ${frameIndex + 1} of ${demoTotalFrames}…`);
+        const time = frameIndex / DEMO_PLAYBACK_FPS;
+
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((resolve) => {
+          const onSeeked = async () => {
+            demoVideo.removeEventListener("seeked", onSeeked);
+            await processDemoFrame(frameIndex);
+            resolve();
+          };
+          demoVideo.addEventListener("seeked", onSeeked, { once: true });
+          demoVideo.currentTime = Math.min(time, demoVideo.duration);
+        });
+      }
+
+      if (demoSlider) demoSlider.value = "0";
+      setDemoControlsDisabled(false);
+      updateDemoCounter();
+      await drawDemoHighlights();
+      updateDemoStatus("Processing complete. Click on the video to select a target patch.");
+    }
+
+    async function processDemoFrame(frameIndex) {
+      const frameCanvas = document.createElement("canvas");
+      frameCanvas.width = demoOverlay.width;
+      frameCanvas.height = demoOverlay.height;
+      frameCanvas.getContext("2d").drawImage(demoVideo, 0, 0, frameCanvas.width, frameCanvas.height);
+
+      demoOffscreenCtx.drawImage(demoVideo, 0, 0, demoOffscreenCanvas.width, demoOffscreenCanvas.height);
+      const rawImage = await RawImage.fromCanvas(demoOffscreenCanvas);
+      const inputs = await demoProcessor(rawImage);
+
+      if (!demoGridInfo) {
+        const [, , h, w] = inputs.pixel_values.dims;
+        demoGridInfo = {
+          width: w / demoPatchSize,
+          height: h / demoPatchSize,
+        };
+      }
+
+      const { last_hidden_state } = await demoModel(inputs);
+      const { normalized_features } = await demoPostModel({ last_hidden_state, offset: demoOffsetTensor });
+
+      demoFrameCache.set(frameIndex, { canvas: frameCanvas, features: normalized_features });
+      last_hidden_state.dispose();
+    }
+
+    function getDemoFrame() {
+      if (!demoSlider) return null;
+      const index = parseInt(demoSlider.value, 10);
+      return demoFrameCache.get(index) ?? null;
+    }
+
+    function drawDemoBase(frameData) {
+      if (!demoOverlayCtx) return;
+      demoOverlayCtx.clearRect(0, 0, demoOverlay.width, demoOverlay.height);
+      if (frameData) {
+        demoOverlayCtx.drawImage(frameData.canvas, 0, 0, demoOverlay.width, demoOverlay.height);
+      } else if (demoVideo) {
+        demoOverlayCtx.drawImage(demoVideo, 0, 0, demoOverlay.width, demoOverlay.height);
+      }
+    }
+
+    async function drawDemoHighlights() {
+      const frameData = getDemoFrame();
+      drawDemoBase(frameData);
+      if (!frameData || !demoGridInfo || !demoOverlayCtx) return;
+
+      const patchW = demoOverlay.width / demoGridInfo.width;
+      const patchH = demoOverlay.height / demoGridInfo.height;
+
+      const highlighted = await getDemoSimilarPatches();
+      if (highlighted) {
+        demoOverlayCtx.fillStyle = "rgba(56, 189, 248, 0.6)";
+        for (const idx of highlighted) {
+          const x = (idx % demoGridInfo.width) * patchW;
+          const y = Math.floor(idx / demoGridInfo.width) * patchH;
+          demoOverlayCtx.fillRect(x, y, patchW, patchH);
+        }
+      }
+
+      if (!demoSlider) return;
+      const frameIndex = parseInt(demoSlider.value, 10);
+      if (demoSelections.has(frameIndex)) {
+        demoOverlayCtx.fillStyle = "rgba(251, 146, 60, 0.7)";
+        for (const idx of demoSelections.get(frameIndex).positive) {
+          const x = (idx % demoGridInfo.width) * patchW;
+          const y = Math.floor(idx / demoGridInfo.width) * patchH;
+          demoOverlayCtx.fillRect(x, y, patchW, patchH);
+        }
+      }
+    }
+
+    async function getDemoSimilarPatches() {
+      if (!demoSlider) return null;
+      const currentIndex = parseInt(demoSlider.value, 10);
+      const currentFrame = demoFrameCache.get(currentIndex);
+      if (!currentFrame) return null;
+
+      const collected = [];
+      let selectionCount = 0;
+
+      for (const [frameIndex, selection] of demoSelections.entries()) {
+        if (!selection.positive.size) continue;
+        const source = demoFrameCache.get(frameIndex);
+        if (!source) continue;
+
+        const [, , hiddenSize] = source.features.dims;
+        const data = source.features.data;
+        for (const idx of selection.positive) {
+          const start = idx * hiddenSize;
+          const end = start + hiddenSize;
+          collected.push(...data.slice(start, end));
+          selectionCount++;
+        }
+      }
+
+      if (selectionCount === 0) return null;
+
+      const [, , hiddenSize] = currentFrame.features.dims;
+      const positives = new Tensor("float32", collected, [1, selectionCount, hiddenSize]);
+      const scores = await matmul(positives, currentFrame.features.permute(0, 2, 1));
+      const maxScores = scores.max(1);
+
+      const highlighted = new Set();
+      maxScores.data.forEach((value, index) => {
+        if (value > DEMO_SIMILARITY_THRESHOLD) highlighted.add(index);
+      });
+
+      positives.dispose();
+      scores.dispose();
+      maxScores.dispose();
+
+      return highlighted;
+    }
+
+    function handleDemoSlider() {
+      if (demoIsPlaying) toggleDemoPlayback();
+      updateDemoCounter();
+      drawDemoHighlights();
+    }
+
+    function toggleDemoPlayback() {
+      if (demoFrameCache.size === 0) return;
+      demoIsPlaying = !demoIsPlaying;
+      if (demoPlayBtn) demoPlayBtn.textContent = demoIsPlaying ? "Pause" : "Play";
+
+      if (demoIsPlaying) {
+        demoLastFrameTime = performance.now();
+        demoAnimationId = requestAnimationFrame(runDemoPlayback);
+      } else if (demoAnimationId) {
+        cancelAnimationFrame(demoAnimationId);
+        demoAnimationId = null;
+      }
+    }
+
+    function runDemoPlayback(timestamp) {
+      if (!demoIsPlaying) return;
+      const interval = 1000 / DEMO_PLAYBACK_FPS;
+
+      if (timestamp - demoLastFrameTime >= interval) {
+        demoLastFrameTime = timestamp;
+        if (demoSlider) {
+          let frame = parseInt(demoSlider.value, 10);
+          frame = (frame + 1) % demoTotalFrames;
+          demoSlider.value = frame.toString();
+        }
+        updateDemoCounter();
+        drawDemoHighlights();
+      }
+
+      demoAnimationId = requestAnimationFrame(runDemoPlayback);
+    }
+
+    async function handleDemoSelection(event) {
+      if (demoFrameCache.size === 0 || !demoGridInfo) return;
+
+      const rect = demoOverlay.getBoundingClientRect();
+      const xRatio = (event.clientX - rect.left) / rect.width;
+      const yRatio = (event.clientY - rect.top) / rect.height;
+
+      const gridX = Math.floor(xRatio * demoGridInfo.width);
+      const gridY = Math.floor(yRatio * demoGridInfo.height);
+      const patchIndex = gridY * demoGridInfo.width + gridX;
+
+      if (!demoSlider) return;
+      const frameIndex = parseInt(demoSlider.value, 10);
+      if (!demoSelections.has(frameIndex)) {
+        demoSelections.set(frameIndex, { positive: new Set() });
+      }
+      demoSelections.get(frameIndex).positive.add(patchIndex);
+      await drawDemoHighlights();
+    }
+
+    async function initializeDemo() {
+      if (!demoVideo) return;
+      try {
+        await loadDemoModels();
+        updateDemoStatus("Loading sample video…");
+
+        demoVideo.crossOrigin = "anonymous";
+
+        await new Promise((resolve) => {
+          demoVideo.addEventListener(
+            "loadedmetadata",
+            () => {
+              configureDemoCanvas();
+              prepareDemoFrames();
+              demoVideo.pause();
+              demoVideo.currentTime = 0;
+              drawDemoBase(null);
+              resolve();
+            },
+            { once: true },
+          );
+          demoVideo.src = DEMO_VIDEO_URL;
+          demoVideo.load();
+        });
+
+        await processDemoFrames();
+      } catch (error) {
+        console.error(error);
+        updateDemoStatus(`Demo error: ${error?.message ?? "Unable to start demo."}`);
+      }
+    }
+
+    if (demoSlider) demoSlider.addEventListener("input", handleDemoSlider);
+    if (demoPlayBtn) demoPlayBtn.addEventListener("click", toggleDemoPlayback);
+    if (demoOverlay) {
+      demoOverlay.addEventListener("mousedown", handleDemoSelection);
+      demoOverlay.addEventListener("contextmenu", (event) => event.preventDefault());
+    }
+
+    initializeDemo();
+  </script>
+
+</body>
 
 </html>
