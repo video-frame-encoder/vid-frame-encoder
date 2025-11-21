@@ -289,6 +289,45 @@
       cursor: wait;
       opacity: 0.65;
     }
+
+    /* --- Downstream tasks styles --- */
+    #downstream-tasks-section {
+      padding: 2.5rem 0;
+    }
+
+    #downstream-tasks-section .hero-body {
+      padding: 1rem 0;
+    }
+
+    #downstream-tasks-section .container {
+      max-width: min(1080px, 92vw);
+    }
+
+    #downstream-carousel .downstream-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.25rem;
+      min-height: clamp(360px, 55vw, 520px);
+      padding: 0 1.25rem;
+    }
+
+    #downstream-carousel .downstream-card img {
+      width: 100%;
+      max-width: 980px;
+      height: auto;
+      border-radius: 18px;
+      object-fit: contain;
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+      background: #fff;
+    }
+
+    #downstream-carousel .downstream-caption {
+      font-size: clamp(1.05rem, 1.5vw, 1.35rem);
+      margin-top: 0.25rem;
+      max-width: 760px;
+    }
   </style>
 </head>
 
@@ -336,7 +375,7 @@
               <div class="publication-links">
                 <!-- Arxiv PDF link -->
                 <span class="link-block">
-                  <a href="neurips_2025.pdf" target="_blank" class="external-link button is-normal is-rounded is-dark">
+                  <a href="https://arxiv.org/abs/2506.05543" target="_blank" class="external-link button is-normal is-rounded is-dark">
                     <span class="icon">
                       <i class="fas fa-file-pdf"></i>
                     </span>
@@ -508,30 +547,27 @@
   </section>
   <!-- End Interactive Demo -->
 
- <!-- Downstream Tasks (previously Key Results) - Optimized size -->
-<section class="hero is-light" style="padding: 2rem 0;">
-  <div class="hero-body" style="padding: 1rem 0;">
+<!-- Downstream Tasks (previously Key Results) - Optimized size -->
+<section id="downstream-tasks-section" class="hero is-light">
+  <div class="hero-body">
     <div class="container">
       <h2 class="title is-3 has-text-centered fade-in-up" style="margin-bottom: 2rem;">Downstream Tasks</h2>
       <div id="downstream-carousel" class="carousel results-carousel">
-        <div class="item slide-in-left" style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 400px;">
-          <!-- Your image here -->
-          <img src="figures/Figure_1.png" alt="Video Object Segmentation Results" style="max-height: 350px; width: auto; object-fit: contain;" />
-          <h2 class="subtitle has-text-centered" style="font-size: 1.1rem; margin-top: 1rem; max-width: 600px;">
+        <div class="item slide-in-left downstream-card">
+          <img src="figures/Figure_1.png" alt="Video Object Segmentation Results" />
+          <h2 class="subtitle has-text-centered downstream-caption">
             Video Object Segmentation on DAVIS
           </h2>
         </div>
-        <div class="item slide-in-right" style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 400px;">
-          <!-- Your image here -->
-          <img src="figures/Figure_2.png" alt="Semantic Part Propagation Results" style="max-height: 350px; width: auto; object-fit: contain;" />
-          <h2 class="subtitle has-text-centered" style="font-size: 1.1rem; margin-top: 1rem; max-width: 600px;">
+        <div class="item slide-in-right downstream-card">
+          <img src="figures/Figure_2.png" alt="Semantic Part Propagation Results" />
+          <h2 class="subtitle has-text-centered downstream-caption">
             Semantic Part Propagation on VIP
           </h2>
         </div>
-        <div class="item slide-in-left" style="display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 400px;">
-          <!-- Your image here -->
-          <img src="figures/Figure_3.png" alt="Pose Propagation Results" style="max-height: 350px; width: auto; object-fit: contain;" />
-          <h2 class="subtitle has-text-centered" style="font-size: 1.1rem; margin-top: 1rem; max-width: 600px;">
+        <div class="item slide-in-left downstream-card">
+          <img src="figures/Figure_3.png" alt="Pose Propagation Results" />
+          <h2 class="subtitle has-text-centered downstream-caption">
             Pose Propagation on JHMDB
           </h2>
         </div>
