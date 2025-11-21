@@ -238,6 +238,57 @@
     #dinov3-slider {
       flex: 1;
     }
+
+    #dinov3-picker {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+
+    .dinov3-tile {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      padding: 0.5rem;
+      border: none;
+      border-radius: 12px;
+      background: #f4f4f5;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, outline 0.2s ease;
+      outline: 2px solid transparent;
+    }
+
+    .dinov3-tile video {
+      width: 100%;
+      border-radius: 8px;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      pointer-events: none;
+    }
+
+    .dinov3-tile span {
+      font-weight: 600;
+      text-align: center;
+      color: #111827;
+    }
+
+    .dinov3-tile:hover:not([disabled]) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
+    }
+
+    .dinov3-tile.is-active {
+      outline-color: #2563eb;
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+      background: #e0ecff;
+    }
+
+    .dinov3-tile[disabled] {
+      cursor: wait;
+      opacity: 0.65;
+    }
   </style>
 </head>
 
@@ -419,7 +470,7 @@
     <div class="container is-max-desktop">
       <h2 class="title is-3 has-text-centered fade-in-up">Interactive Demo</h2>
       <p class="subtitle has-text-centered slide-in-left">
-        Experiment with an in-browser DINOv3 tracker on one of our FRAME clips. The video loads and processes automatically&mdash;click anywhere on the subject you want to follow to visualize the similarity heat map.
+        Experiment with an in-browser FRAME-DINOv3 tracker on a few examples. The video loads and processes automatically&mdash;click anywhere on the subject you want to follow to visualize the similarity heat map.
       </p>
 
       <div id="dinov3-demo" class="box">
@@ -435,6 +486,21 @@
             <button id="dinov3-play" class="button is-dark" disabled>Play</button>
             <input id="dinov3-slider" type="range" min="0" max="0" value="0" disabled>
             <span id="dinov3-counter" class="tag is-dark">Frame 0 / 0</span>
+          </div>
+
+          <div id="dinov3-picker" class="slide-in-right">
+            <button class="dinov3-tile is-active" data-video-id="demo-12927739" type="button" aria-pressed="true">
+              <video src="https://huggingface.co/spaces/webml-community/DINOv3-video-tracking/resolve/main/examples/12927739_60fps.mp4" muted loop playsinline preload="metadata"></video>
+              <span>Demo 1</span>
+            </button>
+            <button class="dinov3-tile" data-video-id="demo-8624901" type="button" aria-pressed="false">
+              <video src="https://huggingface.co/spaces/webml-community/DINOv3-video-tracking/resolve/main/examples/8624901_30fps.mp4" muted loop playsinline preload="metadata"></video>
+              <span>Demo 2</span>
+            </button>
+            <button class="dinov3-tile" data-video-id="demo-4411457" type="button" aria-pressed="false">
+              <video src="https://huggingface.co/spaces/webml-community/DINOv3-video-tracking/resolve/main/examples/4411457_25fps.mp4" muted loop playsinline preload="metadata"></video>
+              <span>Demo 3</span>
+            </button>
           </div>
         </div>
       </div>
@@ -815,7 +881,23 @@
     import { AutoProcessor, AutoModel, RawImage, Tensor, PreTrainedModel, matmul } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
 
     const DEMO_MODEL_ID = "onnx-community/dinov3-vits16-pretrain-lvd1689m-ONNX-MHA-scores";
-    const DEMO_VIDEO_URL = "https://huggingface.co/spaces/webml-community/DINOv3-video-tracking/resolve/main/examples/12927739_60fps.mp4";
+    const DEMO_VIDEOS = [
+      {
+        id: "demo-12927739",
+        label: "Demo 1",
+        src: "https://huggingface.co/spaces/webml-community/DINOv3-video-tracking/resolve/main/examples/12927739_60fps.mp4",
+      },
+      {
+        id: "demo-8624901",
+        label: "Demo 2",
+        src: "https://huggingface.co/spaces/webml-community/DINOv3-video-tracking/resolve/main/examples/8624901_30fps.mp4",
+      },
+      {
+        id: "demo-4411457",
+        label: "Demo 3",
+        src: "https://huggingface.co/spaces/webml-community/DINOv3-video-tracking/resolve/main/examples/4411457_25fps.mp4",
+      },
+    ];
     const DEMO_TARGET_PIXELS = 250_000;
     const DEMO_PLAYBACK_FPS = 10;
     const DEMO_SIMILARITY_THRESHOLD = 0.75;
@@ -827,6 +909,7 @@
     const demoSlider = document.getElementById("dinov3-slider");
     const demoCounter = document.getElementById("dinov3-counter");
     const demoPlayBtn = document.getElementById("dinov3-play");
+    const demoPicker = document.getElementById("dinov3-picker");
 
     let demoProcessor;
     let demoModel;
@@ -845,6 +928,9 @@
     let demoIsPlaying = false;
     let demoAnimationId = null;
     let demoLastFrameTime = 0;
+    let demoModelsLoaded = false;
+    let demoLoadToken = 0;
+    let demoCurrentVideoId = DEMO_VIDEOS[0]?.id ?? null;
 
     function updateDemoStatus(message) {
       if (demoStatus) demoStatus.textContent = message;
@@ -860,6 +946,35 @@
       if (!demoCounter || !demoSlider) return;
       const frame = demoTotalFrames ? parseInt(demoSlider.value, 10) + 1 : 0;
       demoCounter.textContent = `Frame ${frame} / ${demoTotalFrames}`;
+    }
+
+    function getDemoVideoConfig(videoId) {
+      return DEMO_VIDEOS.find((video) => video.id === videoId) ?? null;
+    }
+
+    function setActiveDemoTile(videoId) {
+      if (!demoPicker) return;
+      const tiles = demoPicker.querySelectorAll(".dinov3-tile");
+      tiles.forEach((tile) => {
+        const isActive = tile.dataset.videoId === videoId;
+        tile.classList.toggle("is-active", isActive);
+        tile.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
+    }
+
+    function setDemoPickerDisabled(disabled) {
+      if (!demoPicker) return;
+      const tiles = demoPicker.querySelectorAll(".dinov3-tile");
+      tiles.forEach((tile) => {
+        tile.disabled = disabled;
+        tile.setAttribute("aria-disabled", disabled ? "true" : "false");
+      });
+    }
+
+    async function ensureDemoModels() {
+      if (demoModelsLoaded) return;
+      await loadDemoModels();
+      demoModelsLoaded = true;
     }
 
     async function loadDemoModels() {
@@ -907,33 +1022,51 @@
       updateDemoCounter();
     }
 
-    async function processDemoFrames() {
+    async function processDemoFrames(loadToken) {
       setDemoControlsDisabled(true);
       demoFrameCache.clear();
       demoSelections.clear();
       demoGridInfo = null;
 
       for (let frameIndex = 0; frameIndex < demoTotalFrames; frameIndex++) {
+        if (loadToken !== demoLoadToken) return false;
         updateDemoStatus(`Processing frame ${frameIndex + 1} of ${demoTotalFrames}…`);
         const time = frameIndex / DEMO_PLAYBACK_FPS;
 
         // eslint-disable-next-line no-await-in-loop
-        await new Promise((resolve) => {
+        const frameProcessed = await new Promise((resolve, reject) => {
           const onSeeked = async () => {
             demoVideo.removeEventListener("seeked", onSeeked);
+            demoVideo.removeEventListener("error", onError);
+            if (loadToken !== demoLoadToken) {
+              resolve(false);
+              return;
+            }
             await processDemoFrame(frameIndex);
-            resolve();
+            if (loadToken !== demoLoadToken) {
+              resolve(false);
+              return;
+            }
+            resolve(true);
+          };
+          const onError = () => {
+            demoVideo.removeEventListener("seeked", onSeeked);
+            demoVideo.removeEventListener("error", onError);
+            reject(new Error("Unable to seek video frame."));
           };
           demoVideo.addEventListener("seeked", onSeeked, { once: true });
+          demoVideo.addEventListener("error", onError, { once: true });
           demoVideo.currentTime = Math.min(time, demoVideo.duration);
         });
+
+        if (!frameProcessed) return false;
       }
 
+      if (loadToken !== demoLoadToken) return false;
       if (demoSlider) demoSlider.value = "0";
-      setDemoControlsDisabled(false);
       updateDemoCounter();
       await drawDemoHighlights();
-      updateDemoStatus("Processing complete. Click on the video to select a target patch.");
+      return true;
     }
 
     async function processDemoFrame(frameIndex) {
@@ -1108,35 +1241,86 @@
       await drawDemoHighlights();
     }
 
-    async function initializeDemo() {
-      if (!demoVideo) return;
+    async function initializeDemo(requestedVideo = getDemoVideoConfig(demoCurrentVideoId) ?? DEMO_VIDEOS[0]) {
+      if (!demoVideo || !requestedVideo) return;
+
+      const loadToken = ++demoLoadToken;
+      demoCurrentVideoId = requestedVideo.id;
+      setActiveDemoTile(requestedVideo.id);
+      setDemoPickerDisabled(true);
+      setDemoControlsDisabled(true);
+      updateDemoStatus("Preparing demo…");
+
+      if (demoIsPlaying) toggleDemoPlayback();
+      if (demoPlayBtn) demoPlayBtn.textContent = "Play";
+      if (demoAnimationId) {
+        cancelAnimationFrame(demoAnimationId);
+        demoAnimationId = null;
+      }
+
       try {
-        await loadDemoModels();
-        updateDemoStatus("Loading sample video…");
+        if (!demoModelsLoaded) {
+          await ensureDemoModels();
+          if (loadToken !== demoLoadToken) return;
+        }
+
+        if (loadToken !== demoLoadToken) return;
+        updateDemoStatus(`Loading "${requestedVideo.label}"…`);
 
         demoVideo.crossOrigin = "anonymous";
+        demoVideo.pause();
 
-        await new Promise((resolve) => {
-          demoVideo.addEventListener(
-            "loadedmetadata",
-            () => {
-              configureDemoCanvas();
-              prepareDemoFrames();
-              demoVideo.pause();
-              demoVideo.currentTime = 0;
-              drawDemoBase(null);
-              resolve();
-            },
-            { once: true },
-          );
-          demoVideo.src = DEMO_VIDEO_URL;
+        const metadataLoaded = await new Promise((resolve, reject) => {
+          const cleanup = () => {
+            demoVideo.removeEventListener("loadedmetadata", onLoadedMetadata);
+            demoVideo.removeEventListener("error", onError);
+          };
+
+          const onLoadedMetadata = () => {
+            cleanup();
+            if (loadToken !== demoLoadToken) {
+              resolve(false);
+              return;
+            }
+            configureDemoCanvas();
+            prepareDemoFrames();
+            demoVideo.pause();
+            demoVideo.currentTime = 0;
+            drawDemoBase(null);
+            resolve(true);
+          };
+
+          const onError = () => {
+            cleanup();
+            reject(new Error("Unable to load video."));
+          };
+
+          demoVideo.addEventListener("loadedmetadata", onLoadedMetadata, { once: true });
+          demoVideo.addEventListener("error", onError, { once: true });
+          demoVideo.src = requestedVideo.src;
           demoVideo.load();
         });
 
-        await processDemoFrames();
+        if (!metadataLoaded || loadToken !== demoLoadToken) return;
+
+        const processed = await processDemoFrames(loadToken);
+        if (loadToken !== demoLoadToken) return;
+        if (!processed) return;
+
+        setDemoControlsDisabled(false);
+        updateDemoStatus('Processing complete. Click on the video to select a target patch.');
       } catch (error) {
+        if (loadToken !== demoLoadToken) return;
         console.error(error);
         updateDemoStatus(`Demo error: ${error?.message ?? "Unable to start demo."}`);
+      } finally {
+        if (loadToken === demoLoadToken) {
+          setDemoPickerDisabled(false);
+          if (demoFrameCache.size > 0) {
+            setDemoControlsDisabled(false);
+            updateDemoCounter();
+          }
+        }
       }
     }
 
@@ -1145,6 +1329,20 @@
     if (demoOverlay) {
       demoOverlay.addEventListener("mousedown", handleDemoSelection);
       demoOverlay.addEventListener("contextmenu", (event) => event.preventDefault());
+    }
+    if (demoPicker) {
+      demoPicker.querySelectorAll(".dinov3-tile").forEach((tile) => {
+        tile.addEventListener("click", () => {
+          if (tile.disabled) return;
+          const videoId = tile.dataset.videoId;
+          const config = getDemoVideoConfig(videoId);
+          if (!config) return;
+          initializeDemo(config).catch((error) => {
+            console.error(error);
+            updateDemoStatus(`Demo error: ${error?.message ?? "Unable to start demo."}`);
+          });
+        });
+      });
     }
 
     initializeDemo();
